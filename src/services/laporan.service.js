@@ -5,13 +5,13 @@ const { AppError } = require('../middleware/errorHandler');
 const getDashboardData = async () => {
     try {
         const [penjualanHariIniRows] = await db.query(
-          "SELECT COALESCE(SUM(total_belanja), 0) as total FROM tbl_transaksi WHERE DATE(tanggal_transaksi) = CURDATE()"
+            "SELECT COALESCE(SUM(total_belanja), 0) as total FROM tbl_transaksi WHERE DATE(tanggal_transaksi) = CURDATE()"
         );
 
         const [obatTerjualHariIniRows] = await db.query(
-          "SELECT COALESCE(SUM(dt.jumlah_jual), 0) as total FROM tbl_detail_transaksi dt JOIN tbl_transaksi t ON dt.id_transaksi = t.id_transaksi WHERE DATE(t.tanggal_transaksi) = CURDATE()"
+            "SELECT COALESCE(SUM(dt.jumlah_jual), 0) as total FROM tbl_detail_transaksi dt JOIN tbl_transaksi t ON dt.id_transaksi = t.id_transaksi WHERE DATE(t.tanggal_transaksi) = CURDATE()"
         );
-        
+
         const [grafikDataRows] = await db.query(`
             SELECT CAST(tanggal_transaksi AS DATE) as tanggal, SUM(total_belanja) as total
             FROM tbl_transaksi WHERE tanggal_transaksi >= CURDATE() - INTERVAL 6 DAY
@@ -39,7 +39,7 @@ const getDashboardData = async () => {
             lowStockItems,
             expiringItems
         };
-    } catch(error) {
+    } catch (error) {
         console.error("Error in getDashboardData service:", error);
         throw new AppError("Gagal mengambil data dashboard dari database.", 500);
     }
@@ -71,25 +71,18 @@ const getLaporanPenjualan = async (filters) => {
             -- Menggabungkan detail obat untuk setiap transaksi menjadi satu string
             GROUP_CONCAT(CONCAT(o.nama_obat, ' (', dt.jumlah_jual, ')') SEPARATOR '; ') AS detail_obat,
             -- Menghitung total laba untuk setiap transaksi
-            SUM((dt.harga_jual_saat_transaksi - bs.harga_beli_per_unit) * dt.jumlah_jual) AS total_laba
-        FROM 
-            tbl_transaksi t
-        JOIN 
-            tbl_users u ON t.id_user = u.id_user
-        LEFT JOIN 
-            -- Kita gunakan LEFT JOIN agar transaksi ringkasan amprahan (tanpa detail) tetap muncul
-            tbl_detail_transaksi dt ON t.id_transaksi = dt.id_transaksi
-        LEFT JOIN 
-            tbl_batch_stok bs ON dt.id_batch = bs.id_batch
-        LEFT JOIN 
-            tbl_obat o ON bs.id_obat = o.id_obat
-        ${whereClause}
-        GROUP BY 
-            t.id_transaksi
-        ORDER BY 
-            t.tanggal_transaksi DESC;
-    `;
-    
+            SUM((o.harga_jual - o.harga_beli) * dt.jumlah_jual) AS total_laba
+            FROM 
+                tbl_transaksi t
+            JOIN tbl_users u ON t.id_user = u.id_user
+            LEFT JOIN tbl_detail_transaksi dt ON t.id_transaksi = dt.id_transaksi
+            LEFT JOIN tbl_batch_stok bs ON dt.id_batch = bs.id_batch
+            LEFT JOIN tbl_obat o ON bs.id_obat = o.id_obat -- <-- Join ke tbl_obat
+            ${whereClause}
+            GROUP BY t.id_transaksi
+            ORDER BY t.tanggal_transaksi DESC;
+        `;
+
     const [rows] = await db.query(query, params);
     return rows;
 };

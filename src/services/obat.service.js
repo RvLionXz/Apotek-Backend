@@ -22,12 +22,13 @@ const findAllObatWithStok = async (searchQuery = '') => {
             o.id_obat,
             o.nama_obat,
             o.bentuk_sediaan,
-            o.kandungan_obat, -- <-- GANTI dari 'satuan' ke 'kandungan_obat'
+            o.kandungan_obat,
             o.lead_time_hari,
             o.periode_pengadaan_hari,
+            o.harga_jual AS harga, -- Harga diambil langsung dari tbl_obat
+            o.harga_beli, -- Kita juga perlu harga beli untuk kalkulasi di masa depan
             COALESCE(stok.total_sisa, 0) AS total_stok,
             stok.ed_terdekat,
-            stok.harga,
 
             COALESCE(konsumsi.total_terjual / 30, 0) AS konsumsi_rata_rata_per_hari,
             (2 * o.lead_time_hari * COALESCE(konsumsi.total_terjual / 30, 0)) AS stok_minimum,
@@ -48,10 +49,12 @@ const findAllObatWithStok = async (searchQuery = '') => {
 
         LEFT JOIN (
             SELECT 
-                id_obat, SUM(jumlah_sisa) as total_sisa,
-                MIN(CASE WHEN jumlah_sisa > 0 THEN expired_date ELSE NULL END) as ed_terdekat,
-                ANY_VALUE(harga_jual_per_unit) as harga
-            FROM tbl_batch_stok GROUP BY id_obat
+                id_obat,
+                SUM(jumlah_sisa) as total_sisa,
+                MIN(CASE WHEN jumlah_sisa > 0 THEN expired_date ELSE NULL END) as ed_terdekat
+                -- Kolom 'harga_jual_per_unit' sudah dihapus dari subquery ini
+            FROM tbl_batch_stok
+            GROUP BY id_obat
         ) AS stok ON o.id_obat = stok.id_obat
 
         LEFT JOIN (
@@ -64,7 +67,7 @@ const findAllObatWithStok = async (searchQuery = '') => {
             GROUP BY bs.id_obat
         ) AS konsumsi ON o.id_obat = konsumsi.id_obat
         
-        ${whereSQL} -- Tambahkan klausa WHERE di sini
+        ${whereSQL}
 
         ORDER BY o.nama_obat;
     `;
@@ -74,21 +77,15 @@ const findAllObatWithStok = async (searchQuery = '') => {
 
 
 const createJenisObat = async (obatData) => {
-    const { nama_obat, bentuk_sediaan, kandungan_obat, lead_time_hari, periode_pengadaan_hari } = obatData;
-
+    const { nama_obat, bentuk_sediaan, kandungan_obat, lead_time_hari, periode_pengadaan_hari, harga_beli, harga_jual } = obatData;
     const query = `
-        INSERT INTO tbl_obat (nama_obat, bentuk_sediaan, kandungan_obat, lead_time_hari, periode_pengadaan_hari) 
-        VALUES (?, ?, ?, ?, ?);
+        INSERT INTO tbl_obat (nama_obat, bentuk_sediaan, kandungan_obat, lead_time_hari, periode_pengadaan_hari, harga_beli, harga_jual) 
+        VALUES (?, ?, ?, ?, ?, ?, ?);
     `;
-
     const [result] = await db.query(query, [
-        nama_obat,
-        bentuk_sediaan,
-        kandungan_obat,
-        lead_time_hari || 7,
-        periode_pengadaan_hari || 30
+        nama_obat, bentuk_sediaan, kandungan_obat, lead_time_hari || 7,
+        periode_pengadaan_hari || 30, harga_beli || 0, harga_jual || 0
     ]);
-
     return { id: result.insertId, ...obatData };
 };
 
@@ -154,14 +151,29 @@ const findObatDetailById = async (id) => {
 
 
 const addStokToObat = async (id_obat, stokData) => {
-    const { no_batch, jumlah_masuk, harga_beli_per_unit, harga_jual_per_unit, expired_date } = stokData;
+    const { no_batch, jumlah_masuk, expired_date } = stokData;
+
+    const jumlahMasukAngka = Number(jumlah_masuk);
+    if (isNaN(jumlahMasukAngka) || jumlahMasukAngka <= 0) {
+        throw new AppError("Jumlah masuk harus berupa angka dan lebih dari nol.", 400);
+    }
+
     const query = `
-        INSERT INTO tbl_batch_stok (id_obat, no_batch, jumlah_masuk, jumlah_sisa, harga_beli_per_unit, harga_jual_per_unit, expired_date) 
-        VALUES (?, ?, ?, ?, ?, ?, ?);
+        INSERT INTO tbl_batch_stok (id_obat, no_batch, jumlah_masuk, jumlah_sisa, expired_date) 
+        VALUES (?, ?, ?, ?, ?);
     `;
-    const [result] = await db.query(query, [id_obat, no_batch, jumlah_masuk, jumlah_masuk, harga_beli_per_unit, harga_jual_per_unit, expired_date]);
+
+    const [result] = await db.query(query, [
+        id_obat,
+        no_batch,
+        jumlahMasukAngka,
+        jumlahMasukAngka,
+        expired_date
+    ]);
+
     return { id_batch: result.insertId, ...stokData };
 };
+
 
 
 const deleteObatById = async (id_obat) => {
@@ -197,6 +209,25 @@ const deleteObatById = async (id_obat) => {
     }
 };
 
+const updateJenisObat = async (id_obat, obatData) => {
+    const { nama_obat, bentuk_sediaan, kandungan_obat, lead_time_hari, periode_pengadaan_hari, harga_beli, harga_jual } = obatData;
+    const query = `
+        UPDATE tbl_obat SET 
+        nama_obat = ?, bentuk_sediaan = ?, kandungan_obat = ?, lead_time_hari = ?,
+        periode_pengadaan_hari = ?, harga_beli = ?, harga_jual = ? 
+        WHERE id_obat = ?`;
+
+    const [result] = await db.query(query, [
+        nama_obat, bentuk_sediaan, kandungan_obat, lead_time_hari,
+        periode_pengadaan_hari, harga_beli, harga_jual, id_obat
+    ]);
+
+    if (result.affectedRows === 0) {
+        throw new AppError('Obat tidak ditemukan.', 404);
+    }
+    return { id: id_obat, ...obatData };
+};
+
 
 
 module.exports = {
@@ -205,5 +236,5 @@ module.exports = {
     findObatDetailById,
     addStokToObat,
     deleteObatById,
-
+    updateJenisObat
 };

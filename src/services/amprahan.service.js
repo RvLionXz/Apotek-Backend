@@ -21,7 +21,10 @@ const createAmprahan = async (dataAmprahan, user) => {
             if (jumlahDibutuhkan <= 0) continue;
 
             const [batches] = await connection.execute(
-                'SELECT * FROM tbl_batch_stok WHERE id_obat = ? AND jumlah_sisa > 0 ORDER BY expired_date ASC',
+                `SELECT bs.*, o.harga_jual 
+                FROM tbl_batch_stok bs 
+                JOIN tbl_obat o ON bs.id_obat = o.id_obat 
+                WHERE bs.id_obat = ? AND bs.jumlah_sisa > 0 ORDER BY bs.expired_date ASC`,
                 [item.id_obat]
             );
 
@@ -39,7 +42,7 @@ const createAmprahan = async (dataAmprahan, user) => {
                     [jumlahAmbil, batch.id_batch]
                 );
 
-                const subTotal = jumlahAmbil * parseFloat(batch.harga_jual_per_unit);
+                const subTotal = jumlahAmbil * parseFloat(batch.harga_jual);
                 totalNilai += subTotal;
 
                 detailAmprahanToInsert.push([

@@ -8,19 +8,21 @@ const createTransaksi = async (transaksiData, user) => {
   try {
     await connection.beginTransaction();
 
-    let calculatedTotalBelanja = 0; // Hanya gunakan SATU variabel untuk total.
+    let calculatedTotalBelanja = 0;
     const detailTransaksiToInsert = [];
 
     console.log('--- MEMULAI PERHITUNGAN TRANSAKSI BARU ---');
     console.log('Item diterima dari frontend:', JSON.stringify(items, null, 2));
 
-    // Loop melalui setiap item yang ingin dibeli
     for (const item of items) {
-      let jumlahDibutuhkan = Number(item.jumlah_jual); // Pastikan ini adalah angka
+      let jumlahDibutuhkan = Number(item.jumlah_jual);
       if (!jumlahDibutuhkan || jumlahDibutuhkan <= 0) continue;
 
       const [batches] = await connection.execute(
-        'SELECT * FROM tbl_batch_stok WHERE id_obat = ? AND jumlah_sisa > 0 ORDER BY expired_date ASC',
+        `SELECT bs.*, o.harga_jual 
+         FROM tbl_batch_stok bs 
+         JOIN tbl_obat o ON bs.id_obat = o.id_obat 
+         WHERE bs.id_obat = ? AND bs.jumlah_sisa > 0 ORDER BY bs.expired_date ASC`,
         [item.id_obat]
       );
 
@@ -35,7 +37,7 @@ const createTransaksi = async (transaksiData, user) => {
         const jumlahAmbil = Math.min(jumlahDibutuhkan, batch.jumlah_sisa);
         await connection.execute('UPDATE tbl_batch_stok SET jumlah_sisa = jumlah_sisa - ? WHERE id_batch = ?', [jumlahAmbil, batch.id_batch]);
 
-        const hargaUnit = parseFloat(batch.harga_jual_per_unit);
+        const hargaUnit = parseFloat(batch.harga_jual);
         if (isNaN(hargaUnit)) throw new AppError(`Harga tidak valid untuk batch ID ${batch.id_batch}`, 500);
 
         const subTotal = jumlahAmbil * hargaUnit;
